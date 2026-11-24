@@ -1,0 +1,1 @@
+"""Multimodal entity alignment reranking."""
