@@ -750,7 +750,7 @@ class TrainableAggregator(nn.Module):
 
         effective_score = agent_score * torch.clamp(agent_confidence, min=0.0, max=1.0)
         source_score = torch.cat([base_score.unsqueeze(-1), effective_score], dim=-1)
-        base_used = torch.ones((feat.size(0), 1), dtype=torch.bool, device=feat.device)  #todo
+        base_used = torch.ones((feat.size(0), 1), dtype=torch.bool, device=feat.device)
         source_used = torch.cat([base_used, agent_used], dim=-1)
         logits = self.source_logits.unsqueeze(0).expand_as(source_score)
         #print(logits)
