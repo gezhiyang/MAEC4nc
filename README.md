@@ -6,34 +6,33 @@ trainable aggregator fuses those scores with the original retrieval scores.
 
 ## Setup
 
-Use Python 3.10 or newer and Bash. Install the dependencies before training or
-evaluating.
+The commands below were verified with Python 3.12. Install the dependencies
+before training or evaluating.
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-Fill in the empty `API_KEY` field in your local copy of `src/run.py`. Keep the
-field empty in the published source. The default endpoint is DashScope's
-OpenAI-compatible API. The text and vision models default to `qwen-plus` and
-`qwen-vl-plus`. Pass `--text_model_pool` and `--vision_model_pool` to override
-the comma-separated model lists.
+Pass your API key with `--api_key`. The default endpoint is DashScope's
+OpenAI-compatible API, with `qwen-plus` for text and `qwen-vl-plus` for vision.
+Use `--text_model_pool` and `--vision_model_pool` to supply comma-separated
+model lists.
 Use `--base_url` to set a shared endpoint, or `--text_base_url` and
-`--vision_base_url` for separate endpoints. A shared `--api_key` overrides the
-local key. Use `--text_api_key` and `--vision_api_key` to override either key.
+`--vision_base_url` for separate endpoints. Use `--text_api_key` and
+`--vision_api_key` to override the shared key for each service.
 
 ## Data
 
-Prepare the candidate exports from your upstream entity-alignment pipeline.
-The default dataset directories are `data/DBP15K/ja_en/` for DBP15K and
-`data/icews_wiki/` for ICEWS–WIKI. Use `--data_dir` for the parent directory and
-`--data` for the dataset directory name.
+MAEC takes precomputed candidate exports as input. The `dbp` preset uses
+`data/DBP15K/ja_en/` (DBP15K Japanese–English), and the `maea` preset uses
+`data/icews_wiki/` (ICEWS–WIKI). To change the location, set `--data_dir` to
+the parent directory and `--data` to the dataset directory name.
 
 ```text
 <data_dir>/<data>/
 ├── candidates/
-│   ├── cand              # Evaluation candidates
-│   ├── train_cand        # Training candidates
+│   ├── cand              # Required for evaluation
+│   ├── train_cand        # Required for training
 │   ├── neighbors
 │   ├── name_dict
 │   └── pair_mmea_sims
@@ -41,38 +40,51 @@ The default dataset directories are `data/DBP15K/ja_en/` for DBP15K and
 └── <descriptions>.json   # Optional
 ```
 
-The extensionless files in `candidates/` are UTF-8 JSON. An evaluation or
-training candidate file maps each query entity ID to a record such as
-`{"ref": 12, "ground_rank": 1, "candidates": [34, 12], "cand_sims": [0.85, 0.72]}`.
-`ground_rank` is zero-based. `neighbors` maps IDs to arrays of
-`[head, relation, tail]` or `[head, relation, tail, start, end]` records.
-`name_dict` contains ID-to-name mappings under `ent` and `rel`, with a `time`
-mapping for temporal records. `pair_mmea_sims` maps ID pairs such as
-`"12-34"` to scores, using the smaller ID first.
+Both modes require `neighbors`, `name_dict`, `pair_mmea_sims`, and the
+candidate file for the selected mode. All four files are UTF-8 JSON. Override
+the candidate filename with `--cand_file` for evaluation or `--trainCand_file`
+for training.
 
-Image descriptions can be supplied as an ID-to-caption JSON mapping. The
-dataset defaults are `ja_en_img.json` and `WIKI_img.json`. Use
-`--image_desc_path` and `--image_root` to change the locations.
-Candidate exports, images, and checkpoints are supplied by the runner.
+- The candidate file maps each query entity ID to a record such as
+  `{"ref": 12, "ground_rank": 1, "candidates": [34, 12], "cand_sims": [0.85, 0.72]}`.
+  `ref` is the reference entity ID, `ground_rank` is its zero-based rank in the
+  upstream ranking, and `cand_sims` contains one score per candidate in the
+  same order.
+- `neighbors` maps entity IDs to lists of ID tuples stored as JSON arrays.
+  Use `[head, relation, tail]` for static records or
+  `[head, relation, tail, start, end]` for temporal records.
+- `name_dict` contains ID-to-name mappings under `ent` and `rel`. For temporal
+  records, include `time` with mappings for the start and end IDs.
+- `pair_mmea_sims` maps pairs such as `"12-34"` to scores, with the smaller
+  entity ID first. Supply an empty JSON object (`{}`) when pair scores are
+  unavailable.
+
+Raw images and image descriptions are optional. Images are looked up as
+`<entity-id>.png` under `img/`. Descriptions can be supplied as a JSON map
+from entity IDs to captions. By default the `dbp` preset looks for
+`ja_en_img.json` and `maea` looks for `WIKI_img.json`, both in the dataset
+directory. Use `--image_root` and `--image_desc_path` to change those locations.
 
 ## Train and evaluate
 
-Edit the settings at the top of `run.sh`, then run it from the repository root.
-Set `dataset` to `dbp` or `maea`, and `mode` to `train` or `eval`.
+From the repository root, set the shell variable `MAEC_API_KEY` to your key
+and run the desired command. Replace `dbp` with `maea` for ICEWS–WIKI.
 
 ```bash
-bash run.sh
+python -m src.run --dataset dbp --run_mode train --api_key "$MAEC_API_KEY" --agg_ckpt checkpoints/dbp.pt
+python -m src.run --dataset dbp --run_mode eval --api_key "$MAEC_API_KEY" --agg_ckpt checkpoints/dbp.pt --new_result
 ```
 
-The checked-in settings evaluate DBP15K. The script writes a timestamped log
-under `logs/`. For a different data directory or checkpoint, add `--data_dir`
-or `--agg_ckpt` to the Python command in `run.sh`.
+The optional Bash wrapper `run.sh` defaults to DBP15K evaluation and writes a
+timestamped log under `logs/`. To use the wrapper, add the API arguments to
+its Python command.
 
-Training fits the aggregator over agent scores. Evaluation writes rankings
-under `result/<data>/` and resumes from the existing result file by default.
-Use `--new_result` to rerun evaluation from scratch. If the aggregator
-checkpoint is absent, evaluation uses the model's initial equal logits.
-Use a trained checkpoint when reproducing trained-aggregator results.
+Training fits the aggregator over agent scores and saves its weights to
+`--agg_ckpt`. If the checkpoint file is absent, evaluation uses the initial
+aggregator weights. Evaluation preserves the upstream rank for entities whose
+`ground_rank` is 29 or greater and reranks the remaining entities. Results
+are saved under `result/<data>/`. Remove `--new_result` from the example to
+resume from an existing result file.
 
 ```bash
 python -m src.run --help
